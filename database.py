@@ -74,20 +74,18 @@ def init_database():
     
     # Insert default categories
     default_categories = [
-        ('Groceries', 'expense'),
-        ('Shopping', 'expense'),
-        ('Dining', 'expense'),
-        ('Transportation', 'expense'),
+        ('Fixed', 'expense'),
         ('Utilities', 'expense'),
-        ('Rent/Mortgage', 'expense'),
-        ('Insurance', 'expense'),
-        ('Healthcare', 'expense'),
-        ('Entertainment', 'expense'),
-        ('Subscriptions', 'expense'),
+        ('Bills', 'expense'),
+        ('Groceries', 'expense'),
+        ('Eating out', 'expense'),
+        ('Household Goods', 'expense'),
         ('Travel', 'travel'),
-        ('Hotels', 'travel'),
-        ('Flights', 'travel'),
-        ('Car Rental', 'travel'),
+        ('Gas', 'expense'),
+        ('Health', 'expense'),
+        ('Fun / Misc', 'expense'),
+        ('Business School', 'expense'),
+        ('Gifts', 'expense'),
         ('Salary', 'income'),
         ('Uncategorized', 'expense')
     ]

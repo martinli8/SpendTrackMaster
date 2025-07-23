@@ -4,6 +4,18 @@
 
 This is a Streamlit-based personal finance application that provides comprehensive spend tracking, budgeting, and financial analysis capabilities. The application allows users to import bank statements, manage recurring expenses, track travel budgets, and categorize transactions for detailed financial insights.
 
+## Recent Changes (July 23, 2025)
+
+✓ Updated category system to match user preferences: Fixed, Utilities, Bills, Groceries, Eating out, Household Goods, Travel, Gas, Health, Fun/Misc, Business School, Gifts
+✓ Redesigned main dashboard with month/year dropdowns instead of date range selection
+✓ Reordered metrics: Average Monthly Spend (6mo), Current Month Total, Travel Budget Balance
+✓ Added tabular monthly breakdown by category with percentages
+✓ Implemented clickable categories to view detailed transactions
+✓ Added fixed spend table showing all recurring expenses
+✓ Complete transaction view for selected month including imported and recurring expenses
+✓ Quick categorization functionality directly on dashboard
+✓ Enhanced auto-categorization logic for better transaction classification
+
 ## User Preferences
 
 Preferred communication style: Simple, everyday language.

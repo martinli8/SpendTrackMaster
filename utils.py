@@ -178,38 +178,65 @@ def categorize_transaction(description: str) -> str:
     
     # Grocery stores
     grocery_keywords = [
-        'whole foods', 'trader joe', 'safeway', 'kroger', 'walmart', 'target',
-        'costco', 'sam\'s club', 'grocery', 'market', 'fresh', 'organic'
+        'whole foods', 'trader joe', 'safeway', 'kroger', 'walmart grocery', 'target grocery',
+        'costco', 'sam\'s club', 'grocery', 'market', 'fresh', 'organic', 'food lion', 'harris teeter'
     ]
     
-    # Shopping
-    shopping_keywords = [
-        'amazon', 'ebay', 'best buy', 'home depot', 'lowes', 'macy\'s',
-        'nordstrom', 'gap', 'old navy', 'h&m', 'zara', 'shopping'
+    # Eating out
+    eating_out_keywords = [
+        'restaurant', 'cafe', 'coffee', 'starbucks', 'mcdonald\'s', 'chipotle',
+        'burger', 'pizza', 'taco', 'dining', 'kitchen', 'doordash', 'uber eats',
+        'grubhub', 'takeout', 'delivery'
     ]
     
-    # Dining
-    dining_keywords = [
-        'restaurant', 'cafe', 'coffee', 'starbucks', 'mcdonald\'s',
-        'burger', 'pizza', 'taco', 'dining', 'food', 'kitchen'
+    # Household goods
+    household_keywords = [
+        'amazon', 'target', 'walmart', 'best buy', 'home depot', 'lowes', 
+        'bed bath', 'ikea', 'costco', 'household', 'furniture', 'appliance',
+        'cleaning', 'supplies'
     ]
     
-    # Transportation
-    transport_keywords = [
-        'uber', 'lyft', 'taxi', 'gas', 'shell', 'chevron', 'bp',
-        'parking', 'metro', 'bus', 'train', 'airline', 'flight'
+    # Gas
+    gas_keywords = [
+        'shell', 'exxon', 'chevron', 'bp', 'mobil', 'sunoco', 'gas station',
+        'fuel', 'gasoline', 'petrol'
     ]
     
     # Utilities
     utility_keywords = [
         'electric', 'gas company', 'water', 'internet', 'phone',
-        'cable', 'utility', 'power', 'energy'
+        'cable', 'utility', 'power', 'energy', 'verizon', 'comcast',
+        'at&t', 'spectrum'
     ]
     
-    # Entertainment
-    entertainment_keywords = [
+    # Health
+    health_keywords = [
+        'cvs', 'walgreens', 'pharmacy', 'doctor', 'medical', 'hospital',
+        'dentist', 'health', 'prescription', 'medicine', 'clinic'
+    ]
+    
+    # Travel
+    travel_keywords = [
+        'airline', 'flight', 'hotel', 'airbnb', 'uber', 'lyft', 'taxi',
+        'rental car', 'airport', 'booking', 'expedia', 'travel'
+    ]
+    
+    # Bills
+    bills_keywords = [
+        'insurance', 'loan', 'credit card', 'mortgage', 'rent',
+        'subscription', 'membership', 'payment', 'autopay'
+    ]
+    
+    # Fun/Misc
+    fun_keywords = [
         'netflix', 'hulu', 'spotify', 'apple music', 'cinema',
-        'theater', 'movie', 'concert', 'game', 'entertainment'
+        'theater', 'movie', 'concert', 'game', 'entertainment',
+        'amazon prime', 'youtube', 'disney'
+    ]
+    
+    # Gifts
+    gift_keywords = [
+        'gift', 'present', 'flowers', 'hallmark', 'card'
     ]
     
     # Check each category
@@ -217,25 +244,41 @@ def categorize_transaction(description: str) -> str:
         if keyword in description_lower:
             return 'Groceries'
     
-    for keyword in shopping_keywords:
+    for keyword in eating_out_keywords:
         if keyword in description_lower:
-            return 'Shopping'
+            return 'Eating out'
     
-    for keyword in dining_keywords:
+    for keyword in household_keywords:
         if keyword in description_lower:
-            return 'Dining'
+            return 'Household Goods'
     
-    for keyword in transport_keywords:
+    for keyword in gas_keywords:
         if keyword in description_lower:
-            return 'Transportation'
+            return 'Gas'
     
     for keyword in utility_keywords:
         if keyword in description_lower:
             return 'Utilities'
     
-    for keyword in entertainment_keywords:
+    for keyword in health_keywords:
         if keyword in description_lower:
-            return 'Entertainment'
+            return 'Health'
+    
+    for keyword in travel_keywords:
+        if keyword in description_lower:
+            return 'Travel'
+    
+    for keyword in bills_keywords:
+        if keyword in description_lower:
+            return 'Bills'
+    
+    for keyword in fun_keywords:
+        if keyword in description_lower:
+            return 'Fun / Misc'
+    
+    for keyword in gift_keywords:
+        if keyword in description_lower:
+            return 'Gifts'
     
     # Default category
     return 'Uncategorized'

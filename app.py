@@ -6,8 +6,8 @@ from plotly.subplots import make_subplots
 import sqlite3
 from datetime import datetime, date
 import calendar
-from database import init_database, get_all_transactions, get_recurring_expenses, get_travel_budget_balance, get_monthly_summary
-from utils import get_month_name, calculate_prorated_amount
+from database import init_database, get_all_transactions, get_recurring_expenses, get_travel_budget_balance, get_monthly_summary, update_transaction_category, get_categories
+from utils import get_month_name, calculate_prorated_amount, format_currency
 
 # Initialize the database
 init_database()
@@ -21,219 +21,351 @@ st.set_page_config(
 st.title("💰 Comprehensive Spend Tracker")
 st.markdown("---")
 
-# Sidebar for date range selection
-st.sidebar.header("Date Range Selection")
+# Sidebar for month/year selection
+st.sidebar.header("Month Selection")
 current_date = datetime.now()
-start_date = st.sidebar.date_input(
-    "Start Date",
-    value=date(current_date.year, 1, 1)
-)
-end_date = st.sidebar.date_input(
-    "End Date",
-    value=current_date.date()
+
+# Year selection
+available_years = list(range(2020, current_date.year + 2))
+selected_year = st.sidebar.selectbox(
+    "Year",
+    options=available_years,
+    index=available_years.index(current_date.year)
 )
 
-# Main dashboard content
-col1, col2, col3 = st.columns(3)
+# Month selection
+months = [
+    (1, "January"), (2, "February"), (3, "March"), (4, "April"),
+    (5, "May"), (6, "June"), (7, "July"), (8, "August"),
+    (9, "September"), (10, "October"), (11, "November"), (12, "December")
+]
+month_names = [month[1] for month in months]
+month_values = [month[0] for month in months]
+
+selected_month = st.sidebar.selectbox(
+    "Month",
+    options=month_values,
+    format_func=lambda x: month_names[month_values.index(x)],
+    index=current_date.month - 1
+)
+
+# Calculate date range for selected month
+month_start = date(selected_year, selected_month, 1)
+month_end = date(selected_year, selected_month, calendar.monthrange(selected_year, selected_month)[1])
+
+# Calculate average monthly spend (last 6 months)
+avg_monthly = 0
+monthly_totals = []
+for i in range(6):
+    calc_date = date(current_date.year, current_date.month, 1)
+    if calc_date.month - i <= 0:
+        calc_year = calc_date.year - 1
+        calc_month = 12 + (calc_date.month - i)
+    else:
+        calc_year = calc_date.year
+        calc_month = calc_date.month - i
+    
+    summary = get_monthly_summary(calc_year, calc_month)
+    total = summary['imported_expenses'] + summary['recurring_expenses'] + summary['travel_expenses']
+    monthly_totals.append(total)
+
+avg_monthly = sum(monthly_totals) / len(monthly_totals) if monthly_totals else 0
+
+# Get current month summary
+current_month_summary = get_monthly_summary(selected_year, selected_month)
+current_month_total = (
+    current_month_summary['imported_expenses'] + 
+    current_month_summary['recurring_expenses'] + 
+    current_month_summary['travel_expenses']
+)
 
 # Get travel budget balance
 travel_balance = get_travel_budget_balance()
 
+# Main metrics in requested order
+col1, col2, col3 = st.columns(3)
+
 with col1:
     st.metric(
-        label="Travel Budget Balance",
-        value=f"${travel_balance:,.2f}"
+        label="Average Monthly Spend (6mo)",
+        value=format_currency(avg_monthly)
     )
 
 with col2:
-    # Calculate current month expenses
-    current_month_summary = get_monthly_summary(
-        current_date.year, 
-        current_date.month
-    )
-    current_month_total = (
-        current_month_summary['imported_expenses'] + 
-        current_month_summary['recurring_expenses'] + 
-        current_month_summary['travel_expenses']
-    )
     st.metric(
-        label="Current Month Total Spend",
-        value=f"${current_month_total:,.2f}"
+        label=f"Current Month Total ({get_month_name(selected_month)})",
+        value=format_currency(current_month_total)
     )
 
 with col3:
-    # Calculate average monthly spend
-    monthly_summaries = []
-    for year in range(start_date.year, end_date.year + 1):
-        start_month = start_date.month if year == start_date.year else 1
-        end_month = end_date.month if year == end_date.year else 12
-        
-        for month in range(start_month, end_month + 1):
-            summary = get_monthly_summary(year, month)
-            total = summary['imported_expenses'] + summary['recurring_expenses'] + summary['travel_expenses']
-            monthly_summaries.append(total)
-    
-    avg_monthly = sum(monthly_summaries) / len(monthly_summaries) if monthly_summaries else 0
     st.metric(
-        label="Average Monthly Spend",
-        value=f"${avg_monthly:,.2f}"
+        label="Travel Budget Balance",
+        value=format_currency(travel_balance)
     )
 
 st.markdown("---")
 
-# Monthly spend breakdown chart
-st.subheader("Monthly Spend Breakdown")
+# Monthly Spend Breakdown in Tabular Format
+st.subheader(f"Monthly Spend Breakdown - {get_month_name(selected_month)} {selected_year}")
 
-# Prepare data for monthly chart
-monthly_data = []
-for year in range(start_date.year, end_date.year + 1):
-    start_month = start_date.month if year == start_date.year else 1
-    end_month = end_date.month if year == end_date.year else 12
-    
-    for month in range(start_month, end_month + 1):
-        summary = get_monthly_summary(year, month)
-        monthly_data.append({
-            'Month': f"{get_month_name(month)} {year}",
-            'Year': year,
-            'MonthNum': month,
-            'Imported Expenses': summary['imported_expenses'],
-            'Recurring Expenses': summary['recurring_expenses'],
-            'Travel Expenses': summary['travel_expenses'],
-            'Total': summary['imported_expenses'] + summary['recurring_expenses'] + summary['travel_expenses']
-        })
+# Get transactions for the selected month
+month_transactions = get_all_transactions(month_start, month_end)
+recurring_expenses = get_recurring_expenses()
 
-if monthly_data:
-    df_monthly = pd.DataFrame(monthly_data)
-    
-    # Create stacked bar chart
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        name='Imported Expenses',
-        x=df_monthly['Month'],
-        y=df_monthly['Imported Expenses'],
-        marker_color='lightblue'
-    ))
-    
-    fig.add_trace(go.Bar(
-        name='Recurring Expenses',
-        x=df_monthly['Month'],
-        y=df_monthly['Recurring Expenses'],
-        marker_color='lightgreen'
-    ))
-    
-    fig.add_trace(go.Bar(
-        name='Travel Expenses',
-        x=df_monthly['Month'],
-        y=df_monthly['Travel Expenses'],
-        marker_color='lightcoral'
-    ))
-    
-    fig.update_layout(
-        barmode='stack',
-        title='Monthly Spend Breakdown',
-        xaxis_title='Month',
-        yaxis_title='Amount ($)',
-        height=500
-    )
-    
-    st.plotly_chart(fig, use_container_width=True)
-else:
-    st.info("No data available for the selected date range. Please upload statements and add recurring expenses.")
+# Calculate category totals
+category_totals = {}
+total_spend = 0
 
-# Category breakdown
-st.markdown("---")
-st.subheader("Spend by Category")
-
-col1, col2 = st.columns(2)
-
-with col1:
-    # Get all transactions for category analysis
-    transactions = get_all_transactions(start_date, end_date)
+# Process imported transactions by category
+if month_transactions:
+    df_transactions = pd.DataFrame(month_transactions)
+    expense_transactions = df_transactions[df_transactions['amount'] < 0]
     
-    if transactions:
-        df_transactions = pd.DataFrame(transactions)
-        category_totals = df_transactions.groupby('category')['amount'].sum().abs()
+    for category in expense_transactions['category'].unique():
+        cat_total = abs(expense_transactions[expense_transactions['category'] == category]['amount'].sum())
+        category_totals[category] = category_totals.get(category, 0) + cat_total
+        total_spend += cat_total
+
+# Add recurring expenses (prorated to monthly)
+for expense in recurring_expenses:
+    if expense['is_active']:
+        # Check if expense is active for this month
+        start_date_exp = datetime.strptime(expense['start_date'], '%Y-%m-%d').date()
+        end_date_exp = None
+        if expense['end_date']:
+            end_date_exp = datetime.strptime(expense['end_date'], '%Y-%m-%d').date()
         
-        fig_pie = px.pie(
-            values=category_totals.values,
-            names=category_totals.index,
-            title='Imported Transactions by Category'
-        )
-        st.plotly_chart(fig_pie, use_container_width=True)
-    else:
-        st.info("No imported transactions found for the selected date range.")
+        if start_date_exp <= month_end and (end_date_exp is None or end_date_exp >= month_start):
+            monthly_amount = calculate_prorated_amount(expense['amount'], expense['frequency'])
+            category = expense['category']
+            category_totals[category] = category_totals.get(category, 0) + monthly_amount
+            total_spend += monthly_amount
 
-with col2:
-    # Recurring expenses by category
-    recurring_expenses = get_recurring_expenses()
+# Create category breakdown table
+if category_totals:
+    category_data = []
+    for category, amount in category_totals.items():
+        percentage = (amount / total_spend * 100) if total_spend > 0 else 0
+        category_data.append({
+            'Category': category,
+            'Amount': amount,
+            'Percentage': f"{percentage:.1f}%"
+        })
+    
+    # Sort by amount descending
+    category_data.sort(key=lambda x: x['Amount'], reverse=True)
+    
+    # Display table with clickable categories
+    for item in category_data:
+        col1, col2, col3, col4 = st.columns([3, 2, 1, 1])
+        
+        with col1:
+            if st.button(f"📊 {item['Category']}", key=f"cat_{item['Category']}", help="Click to view transactions"):
+                st.session_state.selected_category = item['Category']
+                st.session_state.show_category_detail = True
+        
+        with col2:
+            st.write(format_currency(item['Amount']))
+        
+        with col3:
+            st.write(item['Percentage'])
+        
+        with col4:
+            st.write("")
+    
+    # Add total row
+    st.markdown(f"**Total Monthly Spend: {format_currency(total_spend)}**")
+else:
+    st.info("No spending data available for the selected month.")
+
+# Show category detail if selected
+if 'show_category_detail' in st.session_state and st.session_state.show_category_detail:
+    st.markdown("---")
+    selected_cat = st.session_state.selected_category
+    st.subheader(f"Transactions in '{selected_cat}' - {get_month_name(selected_month)} {selected_year}")
+    
+    # Get transactions for this category
+    cat_transactions = []
+    if month_transactions:
+        df_month = pd.DataFrame(month_transactions)
+        cat_trans = df_month[df_month['category'] == selected_cat]
+        cat_transactions = cat_trans.to_dict('records')
+    
+    # Add recurring expenses for this category
+    for expense in recurring_expenses:
+        if expense['category'] == selected_cat and expense['is_active']:
+            start_date_exp = datetime.strptime(expense['start_date'], '%Y-%m-%d').date()
+            end_date_exp = None
+            if expense['end_date']:
+                end_date_exp = datetime.strptime(expense['end_date'], '%Y-%m-%d').date()
+            
+            if start_date_exp <= month_end and (end_date_exp is None or end_date_exp >= month_start):
+                monthly_amount = calculate_prorated_amount(expense['amount'], expense['frequency'])
+                cat_transactions.append({
+                    'transaction_date': month_start,
+                    'description': f"{expense['name']} (Recurring)",
+                    'amount': -monthly_amount,
+                    'type': 'Recurring',
+                    'category': selected_cat
+                })
+    
+    if cat_transactions:
+        df_cat = pd.DataFrame(cat_transactions)
+        df_cat = df_cat.sort_values('transaction_date', ascending=False)
+        st.dataframe(df_cat[['transaction_date', 'description', 'amount', 'type']], use_container_width=True)
+        
+        total_cat_amount = abs(df_cat['amount'].sum())
+        st.write(f"**Total for {selected_cat}: {format_currency(total_cat_amount)}**")
+    else:
+        st.info(f"No transactions found for {selected_cat}")
+    
+    if st.button("← Back to Overview"):
+        st.session_state.show_category_detail = False
+        st.rerun()
+
+# Fixed Spend Table
+if 'show_category_detail' not in st.session_state or not st.session_state.show_category_detail:
+    st.markdown("---")
+    st.subheader("Fixed/Recurring Expenses")
     
     if recurring_expenses:
-        df_recurring = pd.DataFrame(recurring_expenses)
+        fixed_data = []
+        for expense in recurring_expenses:
+            if expense['is_active']:
+                monthly_amount = calculate_prorated_amount(expense['amount'], expense['frequency'])
+                fixed_data.append({
+                    'Name': expense['name'],
+                    'Category': expense['category'],
+                    'Original Amount': format_currency(expense['amount']),
+                    'Frequency': expense['frequency'].title(),
+                    'Monthly Amount': format_currency(monthly_amount)
+                })
         
-        # Calculate monthly amounts for each recurring expense
-        monthly_amounts = []
-        for _, expense in df_recurring.iterrows():
-            monthly_amount = calculate_prorated_amount(expense['amount'], expense['frequency'])
-            monthly_amounts.append({
-                'category': expense['category'],
-                'monthly_amount': monthly_amount
+        if fixed_data:
+            df_fixed = pd.DataFrame(fixed_data)
+            st.dataframe(df_fixed, use_container_width=True)
+        else:
+            st.info("No active recurring expenses")
+    else:
+        st.info("No recurring expenses defined")
+
+    # Complete Transaction View for the Month
+    st.markdown("---")
+    st.subheader(f"All Transactions - {get_month_name(selected_month)} {selected_year}")
+    
+    if month_transactions:
+        # Create a comprehensive transaction list including recurring expenses
+        all_month_transactions = []
+        
+        # Add imported transactions
+        for trans in month_transactions:
+            all_month_transactions.append({
+                'Date': trans['transaction_date'],
+                'Description': trans['description'],
+                'Category': trans['category'],
+                'Amount': trans['amount'],
+                'Type': trans['type'],
+                'Source': 'Imported',
+                'ID': trans['id']
             })
         
-        df_recurring_monthly = pd.DataFrame(monthly_amounts)
-        recurring_category_totals = df_recurring_monthly.groupby('category')['monthly_amount'].sum()
+        # Add recurring expenses for this month
+        for expense in recurring_expenses:
+            if expense['is_active']:
+                start_date_exp = datetime.strptime(expense['start_date'], '%Y-%m-%d').date()
+                end_date_exp = None
+                if expense['end_date']:
+                    end_date_exp = datetime.strptime(expense['end_date'], '%Y-%m-%d').date()
+                
+                if start_date_exp <= month_end and (end_date_exp is None or end_date_exp >= month_start):
+                    monthly_amount = calculate_prorated_amount(expense['amount'], expense['frequency'])
+                    all_month_transactions.append({
+                        'Date': month_start,
+                        'Description': f"{expense['name']} (Recurring)",
+                        'Category': expense['category'],
+                        'Amount': -monthly_amount,
+                        'Type': 'Recurring',
+                        'Source': 'Fixed',
+                        'ID': None
+                    })
         
-        fig_pie_recurring = px.pie(
-            values=recurring_category_totals.values,
-            names=recurring_category_totals.index,
-            title='Recurring Expenses by Category (Monthly)'
+        # Sort by date descending
+        all_month_transactions.sort(key=lambda x: x['Date'], reverse=True)
+        
+        # Quick categorization section
+        st.markdown("#### Quick Categorize Recent Transactions")
+        
+        # Get uncategorized transactions
+        uncategorized_trans = [t for t in all_month_transactions if t['Category'] == 'Uncategorized' and t['ID'] is not None]
+        
+        if uncategorized_trans:
+            st.write(f"Found {len(uncategorized_trans)} uncategorized transactions:")
+            
+            # Get available categories
+            available_categories = get_categories()
+            
+            # Show first 5 uncategorized for quick categorization
+            for i, trans in enumerate(uncategorized_trans[:5]):
+                col1, col2, col3, col4, col5 = st.columns([2, 3, 1, 2, 1])
+                
+                with col1:
+                    st.write(trans['Date'])
+                
+                with col2:
+                    st.write(trans['Description'][:40] + "..." if len(trans['Description']) > 40 else trans['Description'])
+                
+                with col3:
+                    st.write(format_currency(trans['Amount']))
+                
+                with col4:
+                    new_category = st.selectbox(
+                        "Category",
+                        options=available_categories,
+                        key=f"quick_cat_{trans['ID']}",
+                        label_visibility="collapsed"
+                    )
+                
+                with col5:
+                    if st.button("Update", key=f"quick_update_{trans['ID']}"):
+                        if update_transaction_category(trans['ID'], new_category):
+                            st.success("Updated!")
+                            st.rerun()
+            
+            if len(uncategorized_trans) > 5:
+                st.info(f"+ {len(uncategorized_trans) - 5} more uncategorized transactions. Visit 'Categorize Transactions' page for bulk operations.")
+        else:
+            st.success("✅ All transactions are categorized!")
+        
+        # Display all transactions table
+        st.markdown("#### Complete Transaction List")
+        df_all = pd.DataFrame(all_month_transactions)
+        
+        # Format amounts for display
+        df_display = df_all.copy()
+        df_display['Amount'] = df_display['Amount'].apply(lambda x: format_currency(x))
+        
+        st.dataframe(
+            df_display[['Date', 'Description', 'Category', 'Amount', 'Type', 'Source']],
+            use_container_width=True
         )
-        st.plotly_chart(fig_pie_recurring, use_container_width=True)
+        
+        # Summary for the month
+        total_expenses = sum([abs(t['Amount']) for t in all_month_transactions if t['Amount'] < 0])
+        total_income = sum([t['Amount'] for t in all_month_transactions if t['Amount'] > 0])
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Expenses", format_currency(total_expenses))
+        with col2:
+            st.metric("Total Income", format_currency(total_income))
+        with col3:
+            st.metric("Net", format_currency(total_income - total_expenses))
+    
     else:
-        st.info("No recurring expenses defined.")
-
-# Recent transactions
-st.markdown("---")
-st.subheader("Recent Transactions")
-
-recent_transactions = get_all_transactions(start_date, end_date, limit=20)
-if recent_transactions:
-    df_recent = pd.DataFrame(recent_transactions)
-    df_recent['amount'] = df_recent['amount'].round(2)
-    df_recent = df_recent.sort_values('transaction_date', ascending=False)
-    
-    st.dataframe(
-        df_recent[['transaction_date', 'description', 'category', 'amount', 'type']],
-        use_container_width=True
-    )
-else:
-    st.info("No recent transactions found.")
-
-# Summary statistics
-st.markdown("---")
-st.subheader("Summary Statistics")
-
-if monthly_data:
-    col1, col2, col3, col4 = st.columns(4)
-    
-    with col1:
-        total_imported = sum([d['Imported Expenses'] for d in monthly_data])
-        st.metric("Total Imported Expenses", f"${total_imported:,.2f}")
-    
-    with col2:
-        total_recurring = sum([d['Recurring Expenses'] for d in monthly_data])
-        st.metric("Total Recurring Expenses", f"${total_recurring:,.2f}")
-    
-    with col3:
-        total_travel = sum([d['Travel Expenses'] for d in monthly_data])
-        st.metric("Total Travel Expenses", f"${total_travel:,.2f}")
-    
-    with col4:
-        grand_total = total_imported + total_recurring + total_travel
-        st.metric("Grand Total", f"${grand_total:,.2f}")
+        st.info("No transactions found for this month. Upload bank statements to get started!")
 
 # Instructions for new users
-if not monthly_data:
+if not month_transactions and not recurring_expenses:
     st.markdown("---")
     st.subheader("Getting Started")
     st.markdown("""
