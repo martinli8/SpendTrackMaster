@@ -6,7 +6,7 @@ from plotly.subplots import make_subplots
 import sqlite3
 from datetime import datetime, date, timedelta
 import calendar
-from database import init_database, get_all_transactions, get_recurring_expenses, get_travel_budget_balance, get_monthly_summary, update_transaction_category, get_categories, add_transaction, edit_transaction, delete_transaction
+from database import init_database, get_all_transactions, get_recurring_expenses, get_travel_budget_balance, get_monthly_summary, update_transaction_category, get_categories, add_transaction, edit_transaction, delete_transaction, get_months_with_data
 from utils import get_month_name, calculate_prorated_amount, format_currency
 
 # Initialize the database
@@ -67,6 +67,32 @@ selected_month = st.sidebar.selectbox(
     format_func=lambda x: month_names[month_values.index(x)],
     index=current_date.month - 1
 )
+
+# Display months with data
+st.sidebar.markdown("---")
+st.sidebar.subheader("📅 Months with Data")
+
+months_with_data = get_months_with_data()
+
+if months_with_data:
+    st.sidebar.write("*Click to view month*")
+    
+    # Create buttons for each month with data
+    for year, month in months_with_data:
+        month_name = month_names[month - 1] if 1 <= month <= 12 else "Unknown"
+        button_label = f"{month_name} {year}"
+        
+        if st.sidebar.button(button_label, key=f"month_btn_{year}_{month}", use_container_width=True):
+            # Update selected_year and selected_month
+            st.session_state['selected_year_btn'] = year
+            st.session_state['selected_month_btn'] = month
+else:
+    st.sidebar.info("No transaction data found. Upload bank statements to get started!")
+
+# Check if month was selected via button click
+if 'selected_year_btn' in st.session_state and 'selected_month_btn' in st.session_state:
+    selected_year = st.session_state['selected_year_btn']
+    selected_month = st.session_state['selected_month_btn']
 
 # Calculate date range for selected month
 month_start = date(selected_year, selected_month, 1)

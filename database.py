@@ -425,6 +425,23 @@ def edit_transaction(transaction_id: int, transaction_date: date = None, descrip
     conn.close()
     return success
 
+def get_months_with_data() -> List[Tuple[int, int]]:
+    """Get all months that have transaction data, ordered by year/month descending"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT DISTINCT 
+            CAST(strftime('%Y', transaction_date) AS INTEGER) as year,
+            CAST(strftime('%m', transaction_date) AS INTEGER) as month
+        FROM transactions
+        ORDER BY year DESC, month DESC
+    """)
+    
+    months = [(row['year'], row['month']) for row in cursor.fetchall()]
+    conn.close()
+    return months
+
 def delete_transaction(transaction_id: int) -> bool:
     """Delete a transaction"""
     conn = get_db_connection()
