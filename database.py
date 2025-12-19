@@ -372,3 +372,67 @@ def get_monthly_summary(year: int, month: int) -> Dict:
         'recurring_expenses': recurring_total,
         'travel_expenses': travel_expenses
     }
+
+def add_transaction(transaction_date: date, description: str, category: str, amount: float, transaction_type: str = 'Debit', memo: str = '') -> int:
+    """Add a manual transaction"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO transactions 
+        (transaction_date, description, category, type, amount, memo, source_file)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (transaction_date, description, category, transaction_type, amount, memo, 'Manual Entry'))
+    
+    transaction_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return transaction_id
+
+def edit_transaction(transaction_id: int, transaction_date: date = None, description: str = None, category: str = None, amount: float = None) -> bool:
+    """Edit a transaction"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    
+    if transaction_date is not None:
+        updates.append("transaction_date = ?")
+        params.append(transaction_date)
+    
+    if description is not None:
+        updates.append("description = ?")
+        params.append(description)
+    
+    if category is not None:
+        updates.append("category = ?")
+        params.append(category)
+    
+    if amount is not None:
+        updates.append("amount = ?")
+        params.append(amount)
+    
+    if not updates:
+        return False
+    
+    params.append(transaction_id)
+    query = f"UPDATE transactions SET {', '.join(updates)} WHERE id = ?"
+    
+    cursor.execute(query, params)
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+def delete_transaction(transaction_id: int) -> bool:
+    """Delete a transaction"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM transactions WHERE id = ?", (transaction_id,))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success

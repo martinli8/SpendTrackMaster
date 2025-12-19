@@ -4,9 +4,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import sqlite3
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import calendar
-from database import init_database, get_all_transactions, get_recurring_expenses, get_travel_budget_balance, get_monthly_summary, update_transaction_category, get_categories
+from database import init_database, get_all_transactions, get_recurring_expenses, get_travel_budget_balance, get_monthly_summary, update_transaction_category, get_categories, add_transaction, edit_transaction, delete_transaction
 from utils import get_month_name, calculate_prorated_amount, format_currency
 
 # Initialize the database
@@ -102,6 +102,93 @@ with col3:
         label="Travel Budget Balance",
         value=format_currency(travel_balance)
     )
+
+st.markdown("---")
+
+# Spending Over Time Chart
+st.subheader("💹 Spending Over Time")
+
+chart_col1, chart_col2 = st.columns([3, 1])
+
+with chart_col1:
+    st.markdown("**Customize your chart**")
+    
+    chart_date_range = st.selectbox(
+        "Time Frame",
+        options=["Last 30 days", "Last 90 days", "Last 6 months", "This Year", "Custom Range"],
+        key="chart_date_range"
+    )
+    
+    if chart_date_range == "Last 30 days":
+        chart_start = date.today() - timedelta(days=30)
+        chart_end = date.today()
+    elif chart_date_range == "Last 90 days":
+        chart_start = date.today() - timedelta(days=90)
+        chart_end = date.today()
+    elif chart_date_range == "Last 6 months":
+        chart_start = date.today() - timedelta(days=180)
+        chart_end = date.today()
+    elif chart_date_range == "This Year":
+        chart_start = date(date.today().year, 1, 1)
+        chart_end = date.today()
+    else:  # Custom Range
+        col_cs, col_ce = st.columns(2)
+        with col_cs:
+            chart_start = st.date_input("Start Date", value=date.today() - timedelta(days=30))
+        with col_ce:
+            chart_end = st.date_input("End Date", value=date.today())
+
+with chart_col2:
+    chart_category_filter = st.multiselect(
+        "Filter by Categories",
+        options=get_categories(),
+        key="chart_category_filter"
+    )
+
+# Get transactions for chart
+chart_transactions = get_all_transactions(chart_start, chart_end)
+
+if chart_transactions:
+    df_chart = pd.DataFrame(chart_transactions)
+    df_chart['transaction_date'] = pd.to_datetime(df_chart['transaction_date'])
+    
+    # Filter by categories if selected
+    if chart_category_filter:
+        df_chart = df_chart[df_chart['category'].isin(chart_category_filter)]
+    
+    # Separate expenses and income
+    expenses = df_chart[df_chart['amount'] < 0].copy()
+    expenses['amount'] = abs(expenses['amount'])
+    
+    # Group by date and sum
+    daily_totals = expenses.groupby(expenses['transaction_date'].dt.date)['amount'].sum().reset_index()
+    daily_totals.columns = ['date', 'amount']
+    daily_totals = daily_totals.sort_values('date')
+    
+    if not daily_totals.empty:
+        fig = px.line(
+            daily_totals,
+            x='date',
+            y='amount',
+            title="Daily Spending Trend" + (f" - {', '.join(chart_category_filter)}" if chart_category_filter else ""),
+            labels={'date': 'Date', 'amount': 'Amount ($)'},
+            markers=True
+        )
+        fig.update_layout(hovermode='x unified', height=400)
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Summary stats for chart period
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Total Spent", format_currency(daily_totals['amount'].sum()))
+        with col2:
+            st.metric("Average Daily", format_currency(daily_totals['amount'].mean()))
+        with col3:
+            st.metric("Highest Day", format_currency(daily_totals['amount'].max()))
+    else:
+        st.info("No transactions found for the selected filters.")
+else:
+    st.info("No transactions in this time period.")
 
 st.markdown("---")
 
@@ -336,8 +423,78 @@ if 'show_category_detail' not in st.session_state or not st.session_state.show_c
         else:
             st.success("✅ All transactions are categorized!")
         
-        # Display all transactions table
+        # Display all transactions table with management options
         st.markdown("#### Complete Transaction List")
+        
+        # Add transaction management expander
+        with st.expander("✏️ Add, Edit, or Delete Transactions", expanded=False):
+            mgmt_tab1, mgmt_tab2, mgmt_tab3 = st.tabs(["Add Transaction", "Edit Transaction", "Delete Transaction"])
+            
+            with mgmt_tab1:
+                st.write("**Add a new manual transaction**")
+                with st.form("add_trans_form_home"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        add_date = st.date_input("Date", value=date.today())
+                        add_desc = st.text_input("Description")
+                    with col2:
+                        add_category = st.selectbox("Category", options=get_categories())
+                        add_amount = st.number_input("Amount", value=0.0, step=0.01)
+                    
+                    add_type = st.selectbox("Type", options=["Debit", "Credit"], key="add_type_home")
+                    
+                    if st.form_submit_button("Add Transaction"):
+                        if add_desc:
+                            add_transaction(add_date, add_desc, add_category, -add_amount if add_type == "Debit" else add_amount, add_type)
+                            st.success("Transaction added!")
+                            st.rerun()
+            
+            with mgmt_tab2:
+                st.write("**Edit an existing transaction**")
+                edit_trans_list = [f"{t['ID']} - {t['Date']} - {t['Description'][:40]}" for t in all_month_transactions if t['ID'] is not None]
+                
+                if edit_trans_list:
+                    selected_trans = st.selectbox("Select transaction", options=edit_trans_list, key="edit_select_home")
+                    selected_trans_id = int(selected_trans.split(' - ')[0])
+                    selected_trans_obj = next((t for t in all_month_transactions if t['ID'] == selected_trans_id), None)
+                    
+                    if selected_trans_obj:
+                        with st.form("edit_trans_form_home"):
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                edit_date = st.date_input("Date", value=selected_trans_obj['Date'])
+                                edit_desc = st.text_input("Description", value=selected_trans_obj['Description'])
+                            with col2:
+                                edit_category = st.selectbox("Category", options=get_categories(), 
+                                                             index=get_categories().index(selected_trans_obj['Category']) if selected_trans_obj['Category'] in get_categories() else 0)
+                                edit_amount = st.number_input("Amount", value=selected_trans_obj['Amount'], step=0.01)
+                            
+                            if st.form_submit_button("Update Transaction"):
+                                edit_transaction(selected_trans_id, edit_date, edit_desc, edit_category, edit_amount)
+                                st.success("Transaction updated!")
+                                st.rerun()
+                else:
+                    st.info("No transactions to edit")
+            
+            with mgmt_tab3:
+                st.write("**Delete a transaction**")
+                del_trans_list = [f"{t['ID']} - {t['Date']} - {t['Description'][:40]}" for t in all_month_transactions if t['ID'] is not None]
+                
+                if del_trans_list:
+                    selected_del = st.selectbox("Select transaction to delete", options=del_trans_list, key="del_select_home")
+                    selected_del_id = int(selected_del.split(' - ')[0])
+                    
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        st.warning(f"Are you sure you want to delete: {selected_del}?")
+                    with col2:
+                        if st.button("Delete", key="delete_btn_home", type="secondary"):
+                            delete_transaction(selected_del_id)
+                            st.success("Transaction deleted!")
+                            st.rerun()
+                else:
+                    st.info("No transactions to delete")
+        
         df_all = pd.DataFrame(all_month_transactions)
         
         # Format amounts for display

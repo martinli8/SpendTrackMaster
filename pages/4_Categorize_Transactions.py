@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
-from database import get_all_transactions, update_transaction_category, get_categories, add_category
+from database import get_all_transactions, update_transaction_category, get_categories, add_category, edit_transaction, delete_transaction
 from utils import format_currency
 
 st.set_page_config(
@@ -180,13 +180,13 @@ page_transactions = df.iloc[start_idx:end_idx].copy()
 # Display transactions for categorization
 for idx, (_, transaction) in enumerate(page_transactions.iterrows()):
     with st.container():
-        col1, col2, col3, col4, col5 = st.columns([2, 3, 1, 1.5, 1])
+        col1, col2, col3, col4, col5, col6, col7 = st.columns([1.5, 2.5, 1, 1.2, 0.8, 0.8, 0.8])
         
         with col1:
             st.write(f"**{transaction['transaction_date']}**")
         
         with col2:
-            st.write(f"{transaction['description'][:50]}...")
+            st.write(f"{transaction['description'][:40]}...")
         
         with col3:
             amount_color = "red" if transaction['amount'] < 0 else "green"
@@ -204,12 +204,63 @@ for idx, (_, transaction) in enumerate(page_transactions.iterrows()):
         
         with col5:
             if new_category != current_category:
-                if st.button("Update", key=f"update_{transaction['id']}"):
+                if st.button("✓", key=f"update_{transaction['id']}", help="Save category"):
                     if update_transaction_category(transaction['id'], new_category):
                         st.success("Updated!")
                         st.rerun()
                     else:
                         st.error("Failed to update")
+        
+        with col6:
+            if st.button("✏️", key=f"edit_{transaction['id']}", help="Edit transaction"):
+                st.session_state[f"edit_mode_{transaction['id']}"] = True
+                st.rerun()
+        
+        with col7:
+            if st.button("🗑️", key=f"delete_{transaction['id']}", help="Delete transaction"):
+                if delete_transaction(transaction['id']):
+                    st.success("Transaction deleted!")
+                    st.rerun()
+                else:
+                    st.error("Failed to delete")
+    
+    # Edit mode for transaction
+    if f"edit_mode_{transaction['id']}" in st.session_state and st.session_state[f"edit_mode_{transaction['id']}"]:
+        with st.container():
+            st.markdown(f"**Editing transaction {transaction['id']}:**")
+            col1, col2, col3, col4 = st.columns([2, 3, 2, 2])
+            
+            with col1:
+                edit_date = st.date_input("Date", value=transaction['transaction_date'], key=f"date_edit_{transaction['id']}")
+            
+            with col2:
+                edit_desc = st.text_input("Description", value=transaction['description'], key=f"desc_edit_{transaction['id']}")
+            
+            with col3:
+                edit_amount = st.number_input("Amount", value=float(transaction['amount']), key=f"amt_edit_{transaction['id']}")
+            
+            with col4:
+                edit_cat = st.selectbox("Category", options=all_categories, 
+                                       index=all_categories.index(transaction['category']) if transaction['category'] in all_categories else 0,
+                                       key=f"cat_edit_{transaction['id']}")
+            
+            edit_col1, edit_col2, edit_col3 = st.columns([2, 1, 1])
+            
+            with edit_col1:
+                if st.button("Save Changes", key=f"save_edit_{transaction['id']}"):
+                    if edit_transaction(transaction['id'], edit_date, edit_desc, edit_cat, edit_amount):
+                        st.success("Transaction updated!")
+                        st.session_state[f"edit_mode_{transaction['id']}"] = False
+                        st.rerun()
+                    else:
+                        st.error("Failed to update")
+            
+            with edit_col2:
+                if st.button("Cancel", key=f"cancel_edit_{transaction['id']}"):
+                    st.session_state[f"edit_mode_{transaction['id']}"] = False
+                    st.rerun()
+            
+            st.divider()
 
 # Show page info
 st.markdown(f"Showing transactions {start_idx + 1}-{end_idx} of {len(df)}")
