@@ -13,12 +13,31 @@ from utils import get_month_name, calculate_prorated_amount, format_currency
 init_database()
 
 st.set_page_config(
-    page_title="Spend Tracker Dashboard",
+    page_title="Dashboard",
     page_icon="💰",
     layout="wide"
 )
 
-st.title("💰 Comprehensive Spend Tracker")
+# Header with title and info button
+col_title, col_info = st.columns([10, 1])
+with col_title:
+    st.title("💰 Dashboard")
+with col_info:
+    if st.button("ℹ️", help="Getting Started Guide"):
+        st.session_state.show_info = not st.session_state.get('show_info', False)
+
+if st.session_state.get('show_info', False):
+    st.info("""
+    **Welcome to your Spend Tracker!** To get started:
+    
+    1. **Upload Bank Statements**: Go to the "Upload Statements" page to import your CSV/Excel files
+    2. **Add Recurring Expenses**: Visit "Recurring Expenses" to add fixed costs like rent, subscriptions, etc.
+    3. **Set Up Travel Budget**: Use "Travel Budget" to manage your $500 monthly travel fund
+    4. **Categorize Transactions**: Go to "Categorize Transactions" to organize your imported expenses
+    
+    Once you have data, this dashboard will show comprehensive insights into your spending patterns!
+    """)
+
 st.markdown("---")
 
 # Sidebar for month/year selection
@@ -521,17 +540,86 @@ if 'show_category_detail' not in st.session_state or not st.session_state.show_c
     else:
         st.info("No transactions found for this month. Upload bank statements to get started!")
 
-# Instructions for new users
-if not month_transactions and not recurring_expenses:
-    st.markdown("---")
-    st.subheader("Getting Started")
-    st.markdown("""
-    Welcome to your Spend Tracker! To get started:
+# Export transactions section
+st.markdown("---")
+st.subheader("📥 Export Transactions")
+
+with st.expander("Export to CSV or Excel", expanded=False):
+    export_col1, export_col2 = st.columns(2)
     
-    1. **Upload Bank Statements**: Go to the "Upload Statements" page to import your CSV/Excel files
-    2. **Add Recurring Expenses**: Visit "Recurring Expenses" to add fixed costs like rent, subscriptions, etc.
-    3. **Set Up Travel Budget**: Use "Travel Budget" to manage your $500 monthly travel fund
-    4. **Categorize Transactions**: Go to "Categorize Transactions" to organize your imported expenses
+    with export_col1:
+        st.write("**Select Date Range**")
+        export_date_range = st.selectbox(
+            "Time Frame",
+            options=["Current Month", "Last 30 days", "Last 90 days", "Last 6 months", "This Year", "Custom Range"],
+            key="export_date_range"
+        )
+        
+        if export_date_range == "Current Month":
+            export_start = month_start
+            export_end = month_end
+        elif export_date_range == "Last 30 days":
+            export_start = date.today() - timedelta(days=30)
+            export_end = date.today()
+        elif export_date_range == "Last 90 days":
+            export_start = date.today() - timedelta(days=90)
+            export_end = date.today()
+        elif export_date_range == "Last 6 months":
+            export_start = date.today() - timedelta(days=180)
+            export_end = date.today()
+        elif export_date_range == "This Year":
+            export_start = date(date.today().year, 1, 1)
+            export_end = date.today()
+        else:  # Custom Range
+            col_s, col_e = st.columns(2)
+            with col_s:
+                export_start = st.date_input("Start Date", value=date.today() - timedelta(days=30), key="export_start")
+            with col_e:
+                export_end = st.date_input("End Date", value=date.today(), key="export_end")
     
-    Once you have data, this dashboard will show comprehensive insights into your spending patterns!
-    """)
+    with export_col2:
+        st.write("**Select Format**")
+        export_format = st.radio("File Format", options=["CSV", "Excel"], horizontal=True)
+    
+    # Get transactions for export
+    export_transactions = get_all_transactions(export_start, export_end)
+    
+    if export_transactions:
+        df_export = pd.DataFrame(export_transactions)
+        df_export['amount_formatted'] = df_export['amount'].apply(format_currency)
+        
+        # Create export dataframe with nice columns
+        df_export_display = df_export[['transaction_date', 'description', 'category', 'amount', 'type', 'amount_formatted']].copy()
+        df_export_display.columns = ['Date', 'Description', 'Category', 'Amount', 'Type', 'Amount (Formatted)']
+        
+        col_preview, col_button = st.columns([2, 1])
+        
+        with col_preview:
+            st.write(f"**Preview** ({len(df_export)} transactions)")
+            st.dataframe(df_export_display.head(10), use_container_width=True)
+        
+        with col_button:
+            st.write("")
+            st.write("")
+            if export_format == "CSV":
+                csv = df_export_display.to_csv(index=False)
+                st.download_button(
+                    label="📥 Download CSV",
+                    data=csv,
+                    file_name=f"transactions_{export_start}_to_{export_end}.csv",
+                    mime="text/csv"
+                )
+            else:  # Excel
+                from io import BytesIO
+                output = BytesIO()
+                with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                    df_export_display.to_excel(writer, index=False, sheet_name='Transactions')
+                output.seek(0)
+                st.download_button(
+                    label="📥 Download Excel",
+                    data=output.getvalue(),
+                    file_name=f"transactions_{export_start}_to_{export_end}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+    else:
+        st.info("No transactions found for the selected date range.")

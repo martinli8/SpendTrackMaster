@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, date, timedelta
-from database import get_all_transactions, update_transaction_category, get_categories, add_category, edit_transaction, delete_transaction
+from database import get_all_transactions, update_transaction_category, get_categories, add_category, edit_transaction, delete_transaction, add_transaction
 from utils import format_currency
 
 st.set_page_config(
@@ -12,6 +12,30 @@ st.set_page_config(
 
 st.title("🏷️ Categorize Transactions")
 st.markdown("Review and categorize your imported transactions for better spending insights.")
+
+# Add manual transaction section
+with st.expander("➕ Add Manual Transaction", expanded=False):
+    st.write("**Add a new transaction manually**")
+    with st.form("add_trans_form_categorize"):
+        col1, col2 = st.columns(2)
+        with col1:
+            add_date = st.date_input("Date", value=date.today())
+            add_desc = st.text_input("Description")
+        with col2:
+            add_category = st.selectbox("Category", options=get_categories())
+            add_amount = st.number_input("Amount", value=0.0, step=0.01)
+        
+        add_type = st.selectbox("Type", options=["Debit", "Credit"], key="add_type_categorize")
+        
+        if st.form_submit_button("Add Transaction"):
+            if add_desc:
+                add_transaction(add_date, add_desc, add_category, -add_amount if add_type == "Debit" else add_amount, add_type)
+                st.success("Transaction added!")
+                st.rerun()
+            else:
+                st.error("Please enter a description")
+
+st.markdown("---")
 
 # Sidebar filters
 st.sidebar.header("Filters")
