@@ -338,6 +338,32 @@ def add_category(name: str, category_type: str) -> bool:
     conn.close()
     return success
 
+def delete_category(category_name: str) -> bool:
+    """Delete a category"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    try:
+        cursor.execute("DELETE FROM categories WHERE name = ?", (category_name,))
+        conn.commit()
+        success = cursor.rowcount > 0
+    except Exception:
+        success = False
+    
+    conn.close()
+    return success
+
+def get_all_categories() -> List[Dict]:
+    """Get all categories with their types"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT name, type FROM categories ORDER BY type, name")
+    
+    categories = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return categories
+
 def get_monthly_summary(year: int, month: int) -> Dict:
     """Get summary of all expenses for a given month"""
     from utils import calculate_prorated_amount
