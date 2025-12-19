@@ -62,6 +62,19 @@ def init_database():
         )
     """)
     
+    # Income table for tracking income separately from transactions
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS income (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            income_date DATE NOT NULL,
+            description TEXT NOT NULL,
+            source TEXT NOT NULL,
+            amount REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
     # Categories table for custom categories
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS categories (
@@ -87,6 +100,11 @@ def init_database():
         ('Business School', 'expense'),
         ('Gifts', 'expense'),
         ('Salary', 'income'),
+        ('Payments', 'expense'),  # Payments category - excluded from spending totals
+        ("Martin's Paycheck", 'income'),
+        ("Rachel's Paycheck", 'income'),
+        ('Misc Income', 'income'),
+        ('Money from Mom', 'income'),
         ('Uncategorized', 'expense')
     ]
     
@@ -373,7 +391,8 @@ def get_monthly_summary(year: int, month: int) -> Dict:
     
     # Get imported transactions
     imported_transactions = get_all_transactions(month_start, month_end)
-    imported_expenses = sum(abs(t['amount']) for t in imported_transactions if t['amount'] < 0)
+    # Exclude "Payments" category from spending calculations
+    imported_expenses = sum(abs(t['amount']) for t in imported_transactions if t['amount'] < 0 and t.get('category', '') != 'Payments')
     
     # Get recurring expenses (prorated for the month)
     recurring_expenses = get_recurring_expenses()
@@ -393,10 +412,14 @@ def get_monthly_summary(year: int, month: int) -> Dict:
     travel_transactions = get_travel_transactions(month_start, month_end)
     travel_expenses = sum(abs(t['amount']) for t in travel_transactions if t['type'] == 'expense')
     
+    # Get income for the month (from dedicated income table, not transactions)
+    month_income = get_monthly_income_total(year, month)
+    
     return {
         'imported_expenses': imported_expenses,
         'recurring_expenses': recurring_total,
-        'travel_expenses': travel_expenses
+        'travel_expenses': travel_expenses,
+        'income': month_income
     }
 
 def add_transaction(transaction_date: date, description: str, category: str, amount: float, transaction_type: str = 'Debit', memo: str = '') -> int:
@@ -479,3 +502,348 @@ def delete_transaction(transaction_id: int) -> bool:
     conn.commit()
     conn.close()
     return success
+
+def bulk_update_transactions(transaction_ids: List[int], transaction_date: date = None, description: str = None, category: str = None, amount: float = None) -> int:
+    """Bulk update multiple transactions with the same changes"""
+    if not transaction_ids:
+        return 0
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    
+    if transaction_date is not None:
+        updates.append("transaction_date = ?")
+        params.append(transaction_date)
+    
+    if description is not None:
+        updates.append("description = ?")
+        params.append(description)
+    
+    if category is not None:
+        updates.append("category = ?")
+        params.append(category)
+    
+    if amount is not None:
+        updates.append("amount = ?")
+        params.append(amount)
+    
+    if not updates:
+        conn.close()
+        return 0
+    
+    # Create placeholders for IN clause
+    placeholders = ','.join('?' * len(transaction_ids))
+    params.extend(transaction_ids)
+    
+    query = f"UPDATE transactions SET {', '.join(updates)} WHERE id IN ({placeholders})"
+    
+    cursor.execute(query, params)
+    updated_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return updated_count
+
+def bulk_update_transaction_descriptions(transaction_ids: List[int], find_text: str, replace_text: str) -> int:
+    """Bulk update transaction descriptions by finding and replacing text"""
+    if not transaction_ids:
+        return 0
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    # Get current descriptions
+    placeholders = ','.join('?' * len(transaction_ids))
+    cursor.execute(f"SELECT id, description FROM transactions WHERE id IN ({placeholders})", transaction_ids)
+    transactions = cursor.fetchall()
+    
+    updated_count = 0
+    for row in transactions:
+        old_desc = row['description']
+        new_desc = old_desc.replace(find_text, replace_text)
+        
+        if old_desc != new_desc:
+            cursor.execute("UPDATE transactions SET description = ? WHERE id = ?", (new_desc, row['id']))
+            updated_count += 1
+    
+    conn.commit()
+    conn.close()
+    return updated_count
+
+def bulk_adjust_amounts(transaction_ids: List[int], operation: str, value: float) -> int:
+    """Bulk adjust transaction amounts (multiply, add, subtract, set)"""
+    if not transaction_ids:
+        return 0
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ','.join('?' * len(transaction_ids))
+    
+    if operation == 'multiply':
+        query = f"UPDATE transactions SET amount = amount * ? WHERE id IN ({placeholders})"
+        params = [value] + transaction_ids
+    elif operation == 'add':
+        query = f"UPDATE transactions SET amount = amount + ? WHERE id IN ({placeholders})"
+        params = [value] + transaction_ids
+    elif operation == 'subtract':
+        query = f"UPDATE transactions SET amount = amount - ? WHERE id IN ({placeholders})"
+        params = [value] + transaction_ids
+    elif operation == 'set':
+        query = f"UPDATE transactions SET amount = ? WHERE id IN ({placeholders})"
+        params = [value] + transaction_ids
+    else:
+        conn.close()
+        return 0
+    
+    cursor.execute(query, params)
+    updated_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return updated_count
+
+def bulk_adjust_dates(transaction_ids: List[int], days: int) -> int:
+    """Bulk adjust transaction dates by adding/subtracting days"""
+    if not transaction_ids or days == 0:
+        return 0
+    
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    placeholders = ','.join('?' * len(transaction_ids))
+    
+    if days > 0:
+        query = f"UPDATE transactions SET transaction_date = date(transaction_date, '+{days} days') WHERE id IN ({placeholders})"
+    else:
+        query = f"UPDATE transactions SET transaction_date = date(transaction_date, '{days} days') WHERE id IN ({placeholders})"
+    
+    cursor.execute(query, transaction_ids)
+    updated_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return updated_count
+
+def delete_transactions_by_upload_date(start_date: datetime = None, end_date: datetime = None) -> int:
+    """Delete transactions based on when they were uploaded (created_at)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = "DELETE FROM transactions WHERE 1=1"
+    params = []
+    
+    if start_date:
+        query += " AND created_at >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND created_at <= ?"
+        params.append(end_date)
+    
+    cursor.execute(query, params)
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count
+
+def delete_transactions_by_source_file(source_file: str) -> int:
+    """Delete all transactions from a specific source file"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM transactions WHERE source_file = ?", (source_file,))
+    deleted_count = cursor.rowcount
+    conn.commit()
+    conn.close()
+    return deleted_count
+
+def get_upload_dates() -> List[Dict]:
+    """Get list of unique upload dates and source files with transaction counts"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        SELECT 
+            DATE(created_at) as upload_date,
+            source_file,
+            COUNT(*) as transaction_count,
+            MIN(created_at) as first_upload,
+            MAX(created_at) as last_upload
+        FROM transactions
+        WHERE source_file IS NOT NULL AND source_file != ''
+        GROUP BY DATE(created_at), source_file
+        ORDER BY first_upload DESC
+    """)
+    
+    uploads = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return uploads
+
+def get_transactions_by_upload_date(start_date: datetime = None, end_date: datetime = None, source_file: str = None) -> List[Dict]:
+    """Get transactions filtered by upload date and/or source file"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM transactions WHERE 1=1"
+    params = []
+    
+    if start_date:
+        query += " AND created_at >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND created_at <= ?"
+        params.append(end_date)
+    
+    if source_file:
+        query += " AND source_file = ?"
+        params.append(source_file)
+    
+    query += " ORDER BY transaction_date DESC"
+    
+    cursor.execute(query, params)
+    transactions = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return transactions
+
+def ensure_income_table():
+    """Ensure the income table exists (for databases created before income table was added)"""
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS income (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            income_date DATE NOT NULL,
+            description TEXT NOT NULL,
+            source TEXT NOT NULL,
+            amount REAL NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    conn.commit()
+    conn.close()
+
+def add_income_entry(income_date: date, description: str, source: str, amount: float) -> int:
+    """Add an income entry to the income table"""
+    ensure_income_table()  # Ensure table exists
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+        INSERT INTO income (income_date, description, source, amount)
+        VALUES (?, ?, ?, ?)
+    """, (income_date, description, source, amount))
+    
+    income_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return income_id
+
+def get_income_entries(start_date: date = None, end_date: date = None) -> List[Dict]:
+    """Get income entries within date range"""
+    ensure_income_table()  # Ensure table exists
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    query = "SELECT * FROM income WHERE 1=1"
+    params = []
+    
+    if start_date:
+        query += " AND income_date >= ?"
+        params.append(start_date)
+    
+    if end_date:
+        query += " AND income_date <= ?"
+        params.append(end_date)
+    
+    query += " ORDER BY income_date DESC"
+    
+    cursor.execute(query, params)
+    income_entries = [dict(row) for row in cursor.fetchall()]
+    conn.close()
+    return income_entries
+
+def get_monthly_income_total(year: int, month: int) -> float:
+    """Get total income for a given month"""
+    ensure_income_table()  # Ensure table exists
+    month_start = date(year, month, 1)
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    
+    income_entries = get_income_entries(month_start, month_end)
+    return sum(entry['amount'] for entry in income_entries)
+
+def get_monthly_income_by_category(year: int, month: int) -> Dict[str, float]:
+    """Get monthly income broken down by source"""
+    ensure_income_table()  # Ensure table exists
+    month_start = date(year, month, 1)
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    
+    income_entries = get_income_entries(month_start, month_end)
+    income_by_source = {}
+    
+    for entry in income_entries:
+        source = entry.get('source', 'Uncategorized')
+        income_by_source[source] = income_by_source.get(source, 0) + entry['amount']
+    
+    return income_by_source
+
+def edit_income_entry(income_id: int, income_date: date = None, description: str = None, source: str = None, amount: float = None) -> bool:
+    """Edit an income entry"""
+    ensure_income_table()  # Ensure table exists
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    updates = []
+    params = []
+    
+    if income_date is not None:
+        updates.append("income_date = ?")
+        params.append(income_date)
+    
+    if description is not None:
+        updates.append("description = ?")
+        params.append(description)
+    
+    if source is not None:
+        updates.append("source = ?")
+        params.append(source)
+    
+    if amount is not None:
+        updates.append("amount = ?")
+        params.append(amount)
+    
+    if not updates:
+        conn.close()
+        return False
+    
+    updates.append("updated_at = CURRENT_TIMESTAMP")
+    params.append(income_id)
+    
+    query = f"UPDATE income SET {', '.join(updates)} WHERE id = ?"
+    
+    cursor.execute(query, params)
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+def delete_income_entry(income_id: int) -> bool:
+    """Delete an income entry"""
+    ensure_income_table()  # Ensure table exists
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    
+    cursor.execute("DELETE FROM income WHERE id = ?", (income_id,))
+    
+    success = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return success
+
+def get_income_categories() -> List[str]:
+    """Get list of income sources"""
+    return ["Martin's Paycheck", "Rachel's Paycheck", "Misc Income", "Money from Mom"]

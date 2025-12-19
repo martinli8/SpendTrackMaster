@@ -123,12 +123,14 @@ current_month_total = (
     current_month_summary['recurring_expenses'] + 
     current_month_summary['travel_expenses']
 )
+current_month_income = current_month_summary.get('income', 0)
+current_month_net = current_month_income - current_month_total
 
 # Get travel budget balance
 travel_balance = get_travel_budget_balance()
 
 # Main metrics in requested order
-col1, col2, col3 = st.columns(3)
+col1, col2, col3, col4 = st.columns(4)
 
 with col1:
     st.metric(
@@ -138,14 +140,22 @@ with col1:
 
 with col2:
     st.metric(
-        label=f"Current Month Total ({get_month_name(selected_month)})",
+        label=f"Current Month Expenses ({get_month_name(selected_month)})",
         value=format_currency(current_month_total)
     )
 
 with col3:
     st.metric(
-        label="Travel Budget Balance",
-        value=format_currency(travel_balance)
+        label=f"Current Month Income ({get_month_name(selected_month)})",
+        value=format_currency(current_month_income)
+    )
+
+with col4:
+    delta_color = "normal" if current_month_net >= 0 else "inverse"
+    st.metric(
+        label=f"Net ({get_month_name(selected_month)})",
+        value=format_currency(current_month_net),
+        delta=format_currency(current_month_net)
     )
 
 st.markdown("---")
@@ -160,11 +170,16 @@ with chart_col1:
     
     chart_date_range = st.selectbox(
         "Time Frame",
-        options=["Last 30 days", "Last 90 days", "Last 6 months", "This Year", "Custom Range"],
+        options=["Last 12 months", "Last 30 days", "Last 90 days", "Last 6 months", "This Year", "Custom Range"],
+        index=0,  # Default to "Last 12 months"
         key="chart_date_range"
     )
     
-    if chart_date_range == "Last 30 days":
+    if chart_date_range == "Last 12 months":
+        # Calculate 12 months ago (approximately 365 days)
+        chart_start = date.today() - timedelta(days=365)
+        chart_end = date.today()
+    elif chart_date_range == "Last 30 days":
         chart_start = date.today() - timedelta(days=30)
         chart_end = date.today()
     elif chart_date_range == "Last 90 days":
@@ -201,23 +216,31 @@ if chart_transactions:
     if chart_category_filter:
         df_chart = df_chart[df_chart['category'].isin(chart_category_filter)]
     
-    # Separate expenses and income
-    expenses = df_chart[df_chart['amount'] < 0].copy()
+    # Separate expenses and income, exclude Payments category
+    expenses = df_chart[(df_chart['amount'] < 0) & (df_chart['category'] != 'Payments')].copy()
     expenses['amount'] = abs(expenses['amount'])
     
-    # Group by date and sum
-    daily_totals = expenses.groupby(expenses['transaction_date'].dt.date)['amount'].sum().reset_index()
-    daily_totals.columns = ['date', 'amount']
-    daily_totals = daily_totals.sort_values('date')
+    # Group by month and sum
+    expenses['year_month'] = expenses['transaction_date'].dt.to_period('M')
+    monthly_totals = expenses.groupby('year_month')['amount'].sum().reset_index()
+    # Convert period to datetime properly to avoid FutureWarning
+    monthly_totals['date'] = monthly_totals['year_month'].dt.to_timestamp()
+    monthly_totals = monthly_totals.sort_values('date')
+    monthly_totals = monthly_totals[['date', 'amount']].copy()
     
-    if not daily_totals.empty:
+    if not monthly_totals.empty:
         fig = px.line(
-            daily_totals,
+            monthly_totals,
             x='date',
             y='amount',
-            title="Daily Spending Trend" + (f" - {', '.join(chart_category_filter)}" if chart_category_filter else ""),
-            labels={'date': 'Date', 'amount': 'Amount ($)'},
+            title="Monthly Spending Trend" + (f" - {', '.join(chart_category_filter)}" if chart_category_filter else ""),
+            labels={'date': 'Month', 'amount': 'Amount ($)'},
             markers=True
+        )
+        # Format x-axis to show month names
+        fig.update_xaxes(
+            tickformat="%b %Y",
+            dtick="M1"
         )
         fig.update_layout(hovermode='x unified', height=400)
         st.plotly_chart(fig, use_container_width=True)
@@ -225,15 +248,128 @@ if chart_transactions:
         # Summary stats for chart period
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.metric("Total Spent", format_currency(daily_totals['amount'].sum()))
+            st.metric("Total Spent", format_currency(monthly_totals['amount'].sum()))
         with col2:
-            st.metric("Average Daily", format_currency(daily_totals['amount'].mean()))
+            st.metric("Average Monthly", format_currency(monthly_totals['amount'].mean()))
         with col3:
-            st.metric("Highest Day", format_currency(daily_totals['amount'].max()))
+            st.metric("Highest Month", format_currency(monthly_totals['amount'].max()))
     else:
         st.info("No transactions found for the selected filters.")
 else:
     st.info("No transactions in this time period.")
+
+st.markdown("---")
+
+# Income vs Expenses Month Over Month (Collapsible)
+with st.expander("📊 Income vs Expenses - Month Over Month", expanded=False):
+    # Get last 12 months of data
+    monthly_comparison = []
+    for i in range(12):
+        calc_date = date.today()
+        if calc_date.month - i <= 0:
+            calc_year = calc_date.year - 1
+            calc_month = 12 + (calc_date.month - i)
+        else:
+            calc_year = calc_date.year
+            calc_month = calc_date.month - i
+        
+        month_summary = get_monthly_summary(calc_year, calc_month)
+        month_expenses = (
+            month_summary['imported_expenses'] + 
+            month_summary['recurring_expenses'] + 
+            month_summary['travel_expenses']
+        )
+        month_income = month_summary.get('income', 0)
+        month_net = month_income - month_expenses
+        
+        monthly_comparison.append({
+            'Month': f"{get_month_name(calc_month)} {calc_year}",
+            'Income': month_income,
+            'Expenses': month_expenses,
+            'Net': month_net
+        })
+
+    monthly_comparison.reverse()  # Show oldest first
+
+    if monthly_comparison:
+        df_comparison = pd.DataFrame(monthly_comparison)
+        
+        # Create dual-axis chart
+        import plotly.graph_objects as go
+        
+        fig = go.Figure()
+        
+        # Add income bars
+        fig.add_trace(
+            go.Bar(
+                x=df_comparison['Month'],
+                y=df_comparison['Income'],
+                name='Income',
+                marker_color='green',
+                opacity=0.7
+            )
+        )
+        
+        # Add expenses bars
+        fig.add_trace(
+            go.Bar(
+                x=df_comparison['Month'],
+                y=df_comparison['Expenses'],
+                name='Expenses',
+                marker_color='red',
+                opacity=0.7
+            )
+        )
+        
+        # Add net line
+        fig.add_trace(
+            go.Scatter(
+                x=df_comparison['Month'],
+                y=df_comparison['Net'],
+                name='Net',
+                mode='lines+markers',
+                line=dict(color='blue', width=3),
+                marker=dict(size=8),
+                yaxis='y2'
+            )
+        )
+        
+        fig.update_layout(
+            title="Monthly Income vs Expenses (Last 12 Months)",
+            xaxis_title="Month",
+            yaxis_title="Amount ($)",
+            yaxis2=dict(title="Net ($)", overlaying='y', side='right'),
+            height=450,
+            hovermode='x unified',
+            barmode='group'
+        )
+        fig.update_xaxes(tickangle=45)
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # Summary table
+        df_display = df_comparison.copy()
+        df_display['Income'] = df_display['Income'].apply(format_currency)
+        df_display['Expenses'] = df_display['Expenses'].apply(format_currency)
+        df_display['Net'] = df_display['Net'].apply(format_currency)
+        
+        st.dataframe(
+            df_display,
+            use_container_width=True,
+            hide_index=True
+        )
+        
+        # Summary statistics
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            avg_income = df_comparison['Income'].mean()
+            st.metric("Average Monthly Income", format_currency(avg_income))
+        with col2:
+            avg_expenses = df_comparison['Expenses'].mean()
+            st.metric("Average Monthly Expenses", format_currency(avg_expenses))
+        with col3:
+            avg_net = df_comparison['Net'].mean()
+            st.metric("Average Monthly Net", format_currency(avg_net))
 
 st.markdown("---")
 
@@ -248,10 +384,10 @@ recurring_expenses = get_recurring_expenses()
 category_totals = {}
 total_spend = 0
 
-# Process imported transactions by category
+# Process imported transactions by category (exclude Payments from spending totals)
 if month_transactions:
     df_transactions = pd.DataFrame(month_transactions)
-    expense_transactions = df_transactions[df_transactions['amount'] < 0]
+    expense_transactions = df_transactions[(df_transactions['amount'] < 0) & (df_transactions['category'] != 'Payments')]
     
     for category in expense_transactions['category'].unique():
         cat_total = abs(expense_transactions[expense_transactions['category'] == category]['amount'].sum())
@@ -307,8 +443,25 @@ if category_totals:
     
     # Add total row
     st.markdown(f"**Total Monthly Spend: {format_currency(total_spend)}**")
-else:
-    st.info("No spending data available for the selected month.")
+
+# Show Payments separately (excluded from spending totals)
+if month_transactions:
+    df_transactions = pd.DataFrame(month_transactions)
+    payment_transactions = df_transactions[(df_transactions['amount'] < 0) & (df_transactions['category'] == 'Payments')]
+    if not payment_transactions.empty:
+        payment_total = abs(payment_transactions['amount'].sum())
+        st.markdown("---")
+        st.markdown("#### 💳 Payments (Excluded from Spending Totals)")
+        st.info(f"**Total Payments: {format_currency(payment_total)}** - These represent bill payments and transfers, not actual expenses. They are excluded from spending calculations.")
+        
+        # Show payment count
+        st.write(f"*{len(payment_transactions)} payment transaction(s) this month*")
+        
+        # Option to view payments
+        if st.button("📋 View Payment Transactions", key="view_payments"):
+            st.session_state.selected_category = 'Payments'
+            st.session_state.show_category_detail = True
+            st.rerun()
 
 # Show category detail if selected
 if 'show_category_detail' in st.session_state and st.session_state.show_category_detail:
@@ -344,8 +497,105 @@ if 'show_category_detail' in st.session_state and st.session_state.show_category
     if cat_transactions:
         df_cat = pd.DataFrame(cat_transactions)
         df_cat = df_cat.sort_values('transaction_date', ascending=False)
-        st.dataframe(df_cat[['transaction_date', 'description', 'amount', 'type']], use_container_width=True)
         
+        # Add search functionality
+        search_term = st.text_input("🔍 Search transactions", placeholder="Search by description...", key="cat_search")
+        if search_term:
+            df_cat = df_cat[df_cat['description'].str.contains(search_term, case=False, na=False)]
+        
+        # Display transactions with edit/delete options
+        for idx, (_, transaction) in enumerate(df_cat.iterrows()):
+            # Skip recurring expenses (they don't have IDs)
+            if 'id' not in transaction or pd.isna(transaction.get('id')) or transaction.get('id') is None:
+                # Display recurring expenses as read-only
+                col1, col2, col3 = st.columns([2, 3, 1.5])
+                with col1:
+                    st.write(str(transaction.get('transaction_date', '')))
+                with col2:
+                    st.write(transaction.get('description', ''))
+                with col3:
+                    st.write(format_currency(transaction.get('amount', 0)))
+                continue
+                
+            trans_id = int(transaction['id'])
+            edit_key = f"edit_cat_{trans_id}"
+            delete_key = f"delete_cat_{trans_id}"
+            
+            col1, col2, col3, col4, col5 = st.columns([2, 3, 1.5, 1, 1])
+            
+            with col1:
+                st.write(str(transaction['transaction_date']))
+            
+            with col2:
+                st.write(transaction['description'][:50] + "..." if len(str(transaction['description'])) > 50 else transaction['description'])
+            
+            with col3:
+                amount_color = "red" if transaction['amount'] < 0 else "green"
+                st.markdown(f"<span style='color:{amount_color}'>{format_currency(transaction['amount'])}</span>", unsafe_allow_html=True)
+            
+            with col4:
+                if st.button("✏️ Edit", key=edit_key, use_container_width=True):
+                    st.session_state[f"edit_cat_trans_{trans_id}"] = True
+                    st.rerun()
+            
+            with col5:
+                if st.button("🗑️ Delete", key=delete_key, use_container_width=True, type="secondary"):
+                    if delete_transaction(trans_id):
+                        st.success("Transaction deleted!")
+                        st.rerun()
+                    else:
+                        st.error("Failed to delete transaction")
+            
+            # Edit form for this transaction
+            if f"edit_cat_trans_{trans_id}" in st.session_state and st.session_state[f"edit_cat_trans_{trans_id}"]:
+                with st.expander(f"Edit Transaction {trans_id}", expanded=True):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        # Convert date to date object if needed
+                        date_value = transaction['transaction_date']
+                        if isinstance(date_value, str):
+                            date_value = datetime.strptime(date_value, '%Y-%m-%d').date()
+                        elif not isinstance(date_value, date):
+                            date_value = date.today()
+                        
+                        edit_date = st.date_input("Date", value=date_value, key=f"cat_edit_date_{trans_id}")
+                        edit_desc = st.text_input("Description", value=transaction['description'], key=f"cat_edit_desc_{trans_id}")
+                    
+                    with col2:
+                        edit_category = st.selectbox(
+                            "Category",
+                            options=get_categories(),
+                            index=get_categories().index(transaction['category']) if transaction['category'] in get_categories() else 0,
+                            key=f"cat_edit_cat_{trans_id}"
+                        )
+                        edit_amount = st.number_input("Amount", value=float(transaction['amount']), step=0.01, key=f"cat_edit_amt_{trans_id}")
+                    
+                    col1, col2 = st.columns([1, 1])
+                    with col1:
+                        if st.button("💾 Save", key=f"cat_save_{trans_id}", type="primary", use_container_width=True):
+                            if edit_transaction(trans_id, edit_date, edit_desc, edit_category, edit_amount):
+                                st.success("Transaction updated!")
+                                st.session_state[f"edit_cat_trans_{trans_id}"] = False
+                                st.rerun()
+                            else:
+                                st.error("Failed to update transaction")
+                    
+                    with col2:
+                        if st.button("❌ Cancel", key=f"cat_cancel_{trans_id}", use_container_width=True):
+                            st.session_state[f"edit_cat_trans_{trans_id}"] = False
+                            st.rerun()
+        
+        # Show recurring expenses separately (read-only)
+        recurring_in_cat = [t for t in cat_transactions if 'id' not in t or pd.isna(t.get('id'))]
+        if recurring_in_cat:
+            st.markdown("---")
+            st.markdown("**Recurring Expenses (read-only):**")
+            df_recurring = pd.DataFrame(recurring_in_cat)
+            st.dataframe(df_recurring[['transaction_date', 'description', 'amount', 'type']], use_container_width=True)
+        
+        # Calculate total excluding Payments if viewing Payments category
+        if selected_cat == 'Payments':
+            st.info("ℹ️ Payments are excluded from spending totals. These represent bill payments and transfers, not actual expenses.")
         total_cat_amount = abs(df_cat['amount'].sum())
         st.write(f"**Total for {selected_cat}: {format_currency(total_cat_amount)}**")
     else:
@@ -385,6 +635,17 @@ if 'show_category_detail' not in st.session_state or not st.session_state.show_c
     st.markdown("---")
     st.subheader(f"All Transactions - {get_month_name(selected_month)} {selected_year}")
     
+    # Add search functionality
+    search_col1, search_col2 = st.columns([3, 1])
+    with search_col1:
+        transaction_search = st.text_input(
+            "🔍 Search transactions",
+            placeholder="Search by description, category, or amount...",
+            key="transaction_search"
+        )
+    with search_col2:
+        st.write("")  # Spacing
+    
     if month_transactions:
         # Create a comprehensive transaction list including recurring expenses
         all_month_transactions = []
@@ -423,6 +684,16 @@ if 'show_category_detail' not in st.session_state or not st.session_state.show_c
         
         # Sort by date descending
         all_month_transactions.sort(key=lambda x: x['Date'], reverse=True)
+        
+        # Apply search filter if provided
+        if transaction_search:
+            search_lower = transaction_search.lower()
+            all_month_transactions = [
+                t for t in all_month_transactions
+                if (search_lower in str(t['Description']).lower() or
+                    search_lower in str(t['Category']).lower() or
+                    search_lower in format_currency(t['Amount']).lower())
+            ]
         
         # Quick categorization section
         st.markdown("#### Quick Categorize Recent Transactions")
@@ -507,7 +778,13 @@ if 'show_category_detail' not in st.session_state or not st.session_state.show_c
                         with st.form("edit_trans_form_home"):
                             col1, col2 = st.columns(2)
                             with col1:
-                                edit_date = st.date_input("Date", value=selected_trans_obj['Date'])
+                                # Convert Date to date object if it's a string
+                                date_value = selected_trans_obj['Date']
+                                if isinstance(date_value, str):
+                                    date_value = datetime.strptime(date_value, '%Y-%m-%d').date()
+                                elif not isinstance(date_value, date):
+                                    date_value = date.today()
+                                edit_date = st.date_input("Date", value=date_value)
                                 edit_desc = st.text_input("Description", value=selected_trans_obj['Description'])
                             with col2:
                                 edit_category = st.selectbox("Category", options=get_categories(), 
@@ -551,8 +828,8 @@ if 'show_category_detail' not in st.session_state or not st.session_state.show_c
             use_container_width=True
         )
         
-        # Summary for the month
-        total_expenses = sum([abs(t['Amount']) for t in all_month_transactions if t['Amount'] < 0])
+        # Summary for the month (exclude Payments from expenses)
+        total_expenses = sum([abs(t['Amount']) for t in all_month_transactions if t['Amount'] < 0 and t.get('Category', '') != 'Payments'])
         total_income = sum([t['Amount'] for t in all_month_transactions if t['Amount'] > 0])
         
         col1, col2, col3 = st.columns(3)

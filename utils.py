@@ -177,6 +177,10 @@ def _parse_amex_excel(ws, filename: str) -> List[Dict]:
             except:
                 continue
             
+            # For American Express: negative amounts are credits, positive are debits
+            # Reverse the sign to match our system (negative = expense, positive = income)
+            amount = -amount
+            
             # Map Amex category to user's category, or auto-categorize
             category = 'Uncategorized'
             if amex_category:
@@ -190,7 +194,8 @@ def _parse_amex_excel(ws, filename: str) -> List[Dict]:
             if category == 'Uncategorized':
                 category = categorize_transaction(description)
             
-            # Determine transaction type based on amount
+            # Determine transaction type based on amount (after sign reversal)
+            # Negative = expense (Debit), Positive = income (Credit)
             transaction_type = 'Debit' if amount < 0 else 'Credit'
             
             transaction = {
@@ -281,6 +286,18 @@ def categorize_transaction(description: str) -> str:
     """Auto-categorize transaction based on description"""
     description_lower = description.lower()
     
+    # Payment transactions (automatic payments, bill payments, transfers)
+    payment_keywords = [
+        'payment', 'autopay', 'auto pay', 'automatic payment', 'bill pay',
+        'credit card payment', 'cc payment', 'card payment', 'pay bill',
+        'transfer', 'payment to', 'pay to', 'online payment', 'electronic payment',
+        'ach payment', 'ach transfer', 'payment sent', 'payment processed'
+    ]
+    
+    for keyword in payment_keywords:
+        if keyword in description_lower:
+            return 'Payments'
+    
     # Grocery stores
     grocery_keywords = [
         'whole foods', 'trader joe', 'safeway', 'kroger', 'walmart grocery', 'target grocery',
@@ -326,10 +343,10 @@ def categorize_transaction(description: str) -> str:
         'rental car', 'airport', 'booking', 'expedia', 'travel'
     ]
     
-    # Bills
+    # Bills (excluding payment keywords which are handled above)
     bills_keywords = [
         'insurance', 'loan', 'credit card', 'mortgage', 'rent',
-        'subscription', 'membership', 'payment', 'autopay'
+        'subscription', 'membership'
     ]
     
     # Fun/Misc

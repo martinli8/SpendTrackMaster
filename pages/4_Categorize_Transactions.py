@@ -183,9 +183,24 @@ with st.expander("Bulk Categorize by Description Pattern", expanded=False):
 st.markdown("---")
 st.subheader("Individual Transaction Review")
 
+# Filter for uncategorized transactions
+show_only_uncategorized = st.checkbox(
+    "Show only uncategorized transactions",
+    key="filter_uncategorized",
+    help="Filter to show only transactions that haven't been categorized yet"
+)
+
+# Apply uncategorized filter if selected
+df_review = df.copy()
+if show_only_uncategorized:
+    df_review = df_review[df_review['category'] == 'Uncategorized']
+    if df_review.empty:
+        st.info("No uncategorized transactions found. All transactions are categorized!")
+        st.stop()
+
 # Pagination
 transactions_per_page = 20
-total_pages = (len(df) - 1) // transactions_per_page + 1
+total_pages = (len(df_review) - 1) // transactions_per_page + 1 if len(df_review) > 0 else 1
 
 col1, col2, col3 = st.columns([2, 1, 2])
 with col2:
@@ -198,8 +213,8 @@ with col2:
     )
 
 start_idx = (current_page - 1) * transactions_per_page
-end_idx = min(start_idx + transactions_per_page, len(df))
-page_transactions = df.iloc[start_idx:end_idx].copy()
+end_idx = min(start_idx + transactions_per_page, len(df_review))
+page_transactions = df_review.iloc[start_idx:end_idx].copy()
 
 # Display transactions for categorization
 for idx, (_, transaction) in enumerate(page_transactions.iterrows()):
@@ -225,15 +240,22 @@ for idx, (_, transaction) in enumerate(page_transactions.iterrows()):
                 key=f"cat_{transaction['id']}",
                 label_visibility="collapsed"
             )
+            
+            # Auto-save when category changes
+            if new_category != current_category:
+                # Check if this is a new change (not already saved)
+                last_saved_key = f"last_saved_cat_{transaction['id']}"
+                if last_saved_key not in st.session_state or st.session_state[last_saved_key] != new_category:
+                    if update_transaction_category(transaction['id'], new_category):
+                        st.session_state[last_saved_key] = new_category
+                        st.rerun()
         
         with col5:
+            # Show checkmark if category was changed (for visual feedback)
             if new_category != current_category:
-                if st.button("✓", key=f"update_{transaction['id']}", help="Save category"):
-                    if update_transaction_category(transaction['id'], new_category):
-                        st.success("Updated!")
-                        st.rerun()
-                    else:
-                        st.error("Failed to update")
+                st.markdown("✓", help="Category updated")
+            else:
+                st.write("")
         
         with col6:
             if st.button("✏️", key=f"edit_{transaction['id']}", help="Edit transaction"):
@@ -255,7 +277,13 @@ for idx, (_, transaction) in enumerate(page_transactions.iterrows()):
             col1, col2, col3, col4 = st.columns([2, 3, 2, 2])
             
             with col1:
-                edit_date = st.date_input("Date", value=transaction['transaction_date'], key=f"date_edit_{transaction['id']}")
+                # Convert transaction_date to date object if it's a string
+                date_value = transaction['transaction_date']
+                if isinstance(date_value, str):
+                    date_value = datetime.strptime(date_value, '%Y-%m-%d').date()
+                elif not isinstance(date_value, date):
+                    date_value = date.today()
+                edit_date = st.date_input("Date", value=date_value, key=f"date_edit_{transaction['id']}")
             
             with col2:
                 edit_desc = st.text_input("Description", value=transaction['description'], key=f"desc_edit_{transaction['id']}")
@@ -287,7 +315,7 @@ for idx, (_, transaction) in enumerate(page_transactions.iterrows()):
             st.divider()
 
 # Show page info
-st.markdown(f"Showing transactions {start_idx + 1}-{end_idx} of {len(df)}")
+st.markdown(f"Showing transactions {start_idx + 1}-{end_idx} of {len(df_review)}" + (f" (filtered from {len(df)} total)" if show_only_uncategorized else ""))
 
 # Quick categorization suggestions
 st.markdown("---")
